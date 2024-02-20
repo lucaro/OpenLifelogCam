@@ -57,7 +57,7 @@ public:
     m_capture_interval(20000),
     m_enable_busy_led(true),
     m_enable_flash(false),
-    m_training_shots(0),
+    m_training_shots(1),
     /*m_ssid(""),
     m_password(""),
     m_ntp_server("pool.ntp.org"),*/

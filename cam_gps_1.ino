@@ -65,7 +65,7 @@
 // If next capture is less then this many micro seconds away, then stay awake.
 #define MIN_SLEEP_TIME (10000000L)
 // Wake-up this many micro seconds before capture time to allow initialization.
-#define WAKE_USEC_EARLY (3000000L)
+#define WAKE_USEC_EARLY (1500000L)
 
 #define GPS_NMEA_TIMEOUT_MS (5L * 1000L)
 #define GPS_DATETIME_TIMEOUT_MS (120L * 1000L)
@@ -73,13 +73,15 @@
 // Minimal unix time for clock to be considered valid.
 #define NOT_BEFORE_TIME 1704063600
 
-// Timelapse directory name format: /sdcard/timelapseXXXX/
-#define CAPTURE_DIR_PREFIX "timelapse"
-#define CAPTURE_DIR_PREFIX_LEN 9
+// Timelapse directory name format: /sdcard/logXXXX/
+#define CAPTURE_DIR_PREFIX "log"
+#define CAPTURE_DIR_PREFIX_LEN 3
 
 // RTC memory storage
 RTC_DATA_ATTR struct {
   struct timeval next_capture_time;
+  bool retry = false;
+  int dir_idx = 0;
 } nv_data;
 
 // Globals
@@ -104,7 +106,11 @@ void setup() {
   esp_bt_controller_disable();
 
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED) {
-    is_wakeup = true;
+    if(nv_data.retry) {
+      nv_data.retry = false;
+    } else {
+      is_wakeup = true;
+    }
   }
 
   Serial.begin(9600);
@@ -115,7 +121,7 @@ void setup() {
   digitalWrite(LED_GPIO_NUM, HIGH);
 
   // Init SD Card
-  if (!init_sdcard()) {
+  if (!init_sdcard(!is_wakeup)) {
     goto fail;
   }
 
@@ -125,6 +131,7 @@ void setup() {
 
   // Load config file
   if (!cfg.loadConfig(!is_wakeup)) {
+    Serial.println("Error loading config\n");
     goto fail;
   }
   update_exif_from_cfg(cfg);
@@ -164,13 +171,10 @@ void setup() {
   return;
 
 fail:
-  // TODO: write dead program for ULP to blink led while in deep sleep, instead of waste power with main CPU
-  while (true) {
-    digitalWrite(LED_GPIO_NUM, LOW);
-    delay(1000);
-    digitalWrite(LED_GPIO_NUM, HIGH);
-    delay(1000);
-  }
+  // sleep for 5 minutes, try again
+  nv_data.retry = true;
+  esp_sleep_enable_timer_wakeup(300000000L);
+  esp_deep_sleep_start();
 }
 
 /**
@@ -264,7 +268,7 @@ bool init_time_gnss() {
 /**
  * Mount SD Card
  */
-static bool init_sdcard() {
+static bool init_sdcard(bool print) {
   esp_err_t ret = ESP_FAIL;
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
@@ -275,20 +279,31 @@ static bool init_sdcard() {
   sdmmc_card_t *card;
 
 
-  Serial.print("Mounting SD card... ");
+  if (print) {
+    Serial.print("Mounting SD card... ");
+  }
   ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot_config, &mount_config,
                                 &card);
   if (ret == ESP_OK) {
-    Serial.println("Done");
+    if (print) {
+      Serial.println("Done");
+    }
   } else {
-    Serial.println("FAILED");
-    Serial.printf("Failed to mount SD card VFAT filesystem. Error: %s\n",
-                  esp_err_to_name(ret));
+    if (print) {
+      Serial.println("FAILED");
+    }
+    //error is always printed
+    Serial.printf("Failed to mount SD card VFAT filesystem. Error: %s\n", esp_err_to_name(ret));
     return false;
+  }
+
+  if (print) {
+    Serial.printf("Card size: %lluMB\n", ((uint64_t) card->csd.capacity) * card->csd.sector_size / (1024 * 1024));
   }
 
   return true;
 }
+
 
 /**
  * Create new directory to store images
@@ -296,7 +311,7 @@ static bool init_sdcard() {
 static bool init_capture_dir(bool reuse_last_dir) {
   DIR *dirp;
   struct dirent *dp;
-  int dir_idx = 0;
+  int dir_idx = nv_data.dir_idx;
 
   // Find unused directory name
   if ((dirp = opendir("/sdcard/")) == NULL) {
@@ -304,26 +319,28 @@ static bool init_capture_dir(bool reuse_last_dir) {
     return -1;
   }
 
-  do {
-    errno = 0;
-    if ((dp = readdir(dirp)) != NULL) {
-      if (strlen(dp->d_name) != CAPTURE_DIR_PREFIX_LEN + 4)
-        continue;
-      if (strncmp(dp->d_name, CAPTURE_DIR_PREFIX,
-                  CAPTURE_DIR_PREFIX_LEN)
-          != 0)
-        continue;
+  if(dir_idx == 0){
+    do {
+      errno = 0;
+      if ((dp = readdir(dirp)) != NULL) {
+        if (strlen(dp->d_name) != CAPTURE_DIR_PREFIX_LEN + 4)
+          continue;
+        if (strncmp(dp->d_name, CAPTURE_DIR_PREFIX,
+                    CAPTURE_DIR_PREFIX_LEN)
+            != 0)
+          continue;
 
-      char *endp;
-      int idx = strtoul(&(dp->d_name[CAPTURE_DIR_PREFIX_LEN]), &endp, 10);
-      if (*endp != '\0')
-        continue;
+        char *endp;
+        int idx = strtoul(&(dp->d_name[CAPTURE_DIR_PREFIX_LEN]), &endp, 10);
+        if (*endp != '\0')
+          continue;
 
-      if (idx > dir_idx) {
-        dir_idx = idx;
+        if (idx > dir_idx) {
+          dir_idx = idx;
+        }
       }
-    }
-  } while (dp != NULL);
+    } while (dp != NULL);
+  }
 
   (void)closedir(dirp);
 
@@ -335,6 +352,8 @@ static bool init_capture_dir(bool reuse_last_dir) {
   if (!reuse_last_dir) {
     dir_idx += 1;
   }
+
+  nv_data.dir_idx = dir_idx;
 
   // Create new dir
   snprintf(capture_path, sizeof(capture_path),
@@ -388,29 +407,33 @@ static void save_photo() {
 
   size_t data_offset = get_jpeg_data_offset(fb);
 
-  // Save picture
-  FILE *file = fopen(filename, "w");
-  if (file != NULL) {
-    size_t ret = 0;
-    if (exif_header != NULL) {
-      ret = fwrite(exif_header, exif_len, 1, file);
-      if (ret != 1) {
-        Serial.println("Failed\nError while writing header to file");
+  for(uint8_t i = 0; i < 3; ++i) {
+    // Save picture
+    FILE *file = fopen(filename, "w");
+    if (file != NULL) {
+      size_t ret = 0;
+      if (exif_header != NULL) {
+        ret = fwrite(exif_header, exif_len, 1, file);
+        if (ret != 1) {
+          Serial.println("Failed\nError while writing header to file");
+          data_offset = 0;
+        }
+      } else {
         data_offset = 0;
       }
-    } else {
-      data_offset = 0;
-    }
 
-    ret = fwrite(&fb->buf[data_offset], fb->len - data_offset, 1, file);
-    if (ret != 1) {
-      Serial.println("Failed\nError while writing to file");
+      ret = fwrite(&fb->buf[data_offset], fb->len - data_offset, 1, file);
+      if (ret != 1) {
+        Serial.println("Failed\nError while writing to file");
+      } else {
+        Serial.printf("Saved as %s\n", filename);
+      }
+      fclose(file);
+      break;
     } else {
-      Serial.printf("Saved as %s\n", filename);
+      Serial.printf("Failed\nCould not open file: %s\n", filename);
+      delay(500);
     }
-    fclose(file);
-  } else {
-    Serial.printf("Failed\nCould not open file: %s\n", filename);
   }
 
   camera_fb_return(fb);
@@ -473,7 +496,7 @@ void loop() {
 
       //Serial.printf("Sleeptime %llu smaller than threshold %llu \n", sleep_time, MIN_SLEEP_TIME);
       //Serial.flush();
-      delay(1);
+      delay(100);
 
     }
   }

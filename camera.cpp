@@ -268,31 +268,20 @@ camera_fb_t *camera_capture()
 {
   camera_fb_t *fb;
 
-#ifdef WITH_FLASH
-  if (cfg.getEnableFlash()) {
-    digitalWrite(FLASH_GPIO_NUM, HIGH);
-  }
-#endif // WITH_FLASH
-
   // Take some shots to train the AGC/AWB
-  Serial.print("Training:");
-  for (int i=cfg.getTrainingShots(); i != 0; i--) {
-    Serial.printf(" %d", i);
-    fb = esp_camera_fb_get();
-    esp_camera_fb_return(fb);
+  if (cfg.getTrainingShots() > 0) {
+    Serial.print("Training:");
+    for (int i=cfg.getTrainingShots(); i != 0; i--) {
+      Serial.printf(" %d", i);
+      fb = esp_camera_fb_get();
+      esp_camera_fb_return(fb);
+    }
+    Serial.println(" Done");
   }
-  Serial.println(" Done");
 
   // Take picture
   Serial.print("Taking picture... ");
   fb = esp_camera_fb_get();
-
-  // Disable Flash
-#ifdef WITH_FLASH
-  if (cfg.getEnableFlash()) {
-    digitalWrite(FLASH_GPIO_NUM, LOW);
-  }
-#endif // WITH_FLASH
 
   return fb;
 }
