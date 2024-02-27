@@ -120,7 +120,7 @@ typedef struct {
 #define CAMERA_MODEL "OV2640"
 
 // Camera Software string
-#define CAMERA_SOFTWARE "ESP32-CAM Interval v" VERSION_STR
+#define CAMERA_SOFTWARE "OpenLifelogCam v" VERSION_STR
 
 // GPS map datum, probably always 'WGS-84'
 #define GPS_MAP_DATUM "WGS-84"

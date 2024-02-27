@@ -1,10 +1,10 @@
 /**
- * ESP32-CAM_Interval.ino - Capture pictures to SD card at set interval.
- *
+ * OpenLifelogCam.
+ * Based on the code from https://github.com/dimhoff/ESP32-CAM_Interval
+ * Copyright (c) 2019, David Imhoff <dimhoff.devel@gmail.com>
  * Based on the code from https://robotzero.one/time-lapse-esp32-cameras/
  * Original Copyright: Copyright (c) 2019, Robot Zero One
  *
- * Copyright (c) 2019, David Imhoff <dimhoff.devel@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -92,21 +92,25 @@ char nmeaBuffer[255];
 MicroNMEA nmea(nmeaBuffer, sizeof(nmeaBuffer));
 
 
+void log(const char *text) {
+  if (cfg.getLogSerial()) {
+    Serial.println(text);
+  }
+}
+
+
 /************************ Initialization ************************/
 void setup() {
   bool time_set = false;
   bool is_wakeup = false;
 
-  //Set clock frequency to 20MHz
-  //setCpuFrequencyMhz(40);
-
-  //Make sure radios are disabled 
+  //Make sure radios are disabled
   btStop();
   esp_wifi_stop();
   esp_bt_controller_disable();
 
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED) {
-    if(nv_data.retry) {
+    if (nv_data.retry) {
       nv_data.retry = false;
     } else {
       is_wakeup = true;
@@ -125,10 +129,6 @@ void setup() {
     goto fail;
   }
 
-
-
-  // TODO: error log to file?
-
   // Load config file
   if (!cfg.loadConfig(!is_wakeup)) {
     Serial.println("Error loading config\n");
@@ -145,7 +145,7 @@ void setup() {
     time_t now = time(NULL);
     Serial.printf("Current time: %s", ctime(&now));
   } else {
-    Serial.println("Failed to determine current date/time\n");
+    log("Failed to determine current date/time\n");
   }
 
   // Inititialize next capture time
@@ -154,6 +154,7 @@ void setup() {
   } else {
     (void)gettimeofday(&next_capture_time, NULL);
   }
+
   Serial.printf("Next image at: %s", ctime(&next_capture_time.tv_sec));
 
   // Initialize capture directory
@@ -165,8 +166,6 @@ void setup() {
   if (!camera_init()) {
     goto fail;
   }
-
-  Serial.println("--- Initialization Done ---");
 
   return;
 
@@ -183,7 +182,7 @@ fail:
  * @returns True on succes, false on failure
  */
 bool init_time_gnss() {
-  Serial.print("Waiting for time from GNSS: ");
+  log("Waiting for time from GNSS: ");
 
   long start_millis;
 
@@ -201,9 +200,7 @@ bool init_time_gnss() {
     }
   }
   if (!nmea.getNavSystem()) {
-    Serial.println("Failed, No NMEA data received");
-    // TODO: maybe preserve this information across deep sleeps, so that GNSS
-    // isn't tryed after deep sleep if no GNSS receiver is available.
+    log("Failed, No NMEA data received");
     return false;
   }
 
@@ -225,7 +222,7 @@ bool init_time_gnss() {
   }
 
   if (!have_time) {
-    Serial.println("Failed, unable to get valid date from GPS");
+    log("Failed, unable to get valid date from GPS");
     return false;
   }
 
@@ -239,7 +236,7 @@ bool init_time_gnss() {
   tm.tm_sec = nmea.getSecond();
   time_t t = mktime(&tm);
   if (t == (time_t)-1) {
-    Serial.println("Failed, time could not be converted");
+    log("Failed, time could not be converted");
     return false;
   }
 
@@ -253,13 +250,15 @@ bool init_time_gnss() {
   setenv("TZ", cfg.getTzInfo(), 1);
   tzset();
 
-  Serial.println("Done");
+  if (cfg.getLogSerial()) {
+    Serial.println("Done");
 
-  Serial.print("Lat: ");
-  Serial.print(nmea.getLatitude());
-  Serial.print(" Lon: ");
-  Serial.print(nmea.getLongitude());
-  Serial.println();
+    Serial.print("Lat: ");
+    Serial.print(nmea.getLatitude());
+    Serial.print(" Lon: ");
+    Serial.print(nmea.getLongitude());
+    Serial.println();
+  }
 
   return true;
 }
@@ -298,7 +297,7 @@ static bool init_sdcard(bool print) {
   }
 
   if (print) {
-    Serial.printf("Card size: %lluMB\n", ((uint64_t) card->csd.capacity) * card->csd.sector_size / (1024 * 1024));
+    Serial.printf("Card size: %lluMB\n", ((uint64_t)card->csd.capacity) * card->csd.sector_size / (1024 * 1024));
   }
 
   return true;
@@ -319,7 +318,7 @@ static bool init_capture_dir(bool reuse_last_dir) {
     return -1;
   }
 
-  if(dir_idx == 0){
+  if (dir_idx == 0) {
     do {
       errno = 0;
       if ((dp = readdir(dirp)) != NULL) {
@@ -367,8 +366,10 @@ static bool init_capture_dir(bool reuse_last_dir) {
     }
   }
 
-  Serial.print("Storing pictures in: ");
-  Serial.println(capture_path);
+  if (cfg.getLogSerial()) {
+    Serial.print("Storing pictures in: ");
+    Serial.println(capture_path);
+  }
 
   return true;
 }
@@ -407,7 +408,7 @@ static void save_photo() {
 
   size_t data_offset = get_jpeg_data_offset(fb);
 
-  for(uint8_t i = 0; i < 3; ++i) {
+  for (uint8_t i = 0; i < 3; ++i) {
     // Save picture
     FILE *file = fopen(filename, "w");
     if (file != NULL) {
@@ -425,7 +426,7 @@ static void save_photo() {
       ret = fwrite(&fb->buf[data_offset], fb->len - data_offset, 1, file);
       if (ret != 1) {
         Serial.println("Failed\nError while writing to file");
-      } else {
+      } else if(cfg.getLogSerial()) {
         Serial.printf("Saved as %s\n", filename);
       }
       fclose(file);
@@ -453,6 +454,10 @@ void loop() {
     save_photo();
 
     timeradd(&next_capture_time, &capture_interval_tv, &next_capture_time);
+
+    if (!timercmp(&now, &next_capture_time, <)) {
+      next_capture_time = now;
+    }
   }
 
   // Process Serial input
@@ -494,11 +499,7 @@ void loop() {
       // This line will never be reached....
     } else {
 
-      //Serial.printf("Sleeptime %llu smaller than threshold %llu \n", sleep_time, MIN_SLEEP_TIME);
-      //Serial.flush();
       delay(100);
-
     }
   }
-
 }

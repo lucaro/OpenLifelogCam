@@ -56,11 +56,8 @@ public:
   Configuration() :
     m_capture_interval(20000),
     m_enable_busy_led(true),
-    m_enable_flash(false),
+    m_log_serial(false),
     m_training_shots(1),
-    /*m_ssid(""),
-    m_password(""),
-    m_ntp_server("pool.ntp.org"),*/
     m_tzinfo("GMT0"),
     m_orientation(1),
     m_frame_size(FRAMESIZE_UXGA),
@@ -93,7 +90,7 @@ public:
 
   unsigned int getCaptureInterval() const { return m_capture_interval; }
   bool getEnableBusyLed() const { return m_enable_busy_led; }
-  bool getEnableFlash() const { return m_enable_flash; }
+  bool getLogSerial() const { return m_log_serial; }
   unsigned int getTrainingShots() const { return m_training_shots; };
 
   /*const char *getSsid() const { return m_ssid; }
@@ -140,8 +137,8 @@ private:
          * Must be > 1000 if using timestamp filenames
          */
   bool m_enable_busy_led;
-        /* Enable LED when taking a picture to indicate device is busy. */
-  bool m_enable_flash;
+        /* Enable logging to Serial out. */
+  bool m_log_serial;
         /* Enable Flash LED when taking a picture */
   unsigned int m_training_shots;
         /* Amount of images to take before the real shot to train the AGC/AWB */

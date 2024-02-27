@@ -97,27 +97,6 @@ int Configuration::config_set(const char *key, const char *value, const bool pri
       Serial.println("Capture interval to small, changing to 1 Sec.");
       m_capture_interval = 1000;
     }
-  /*} else if (strcasecmp(key, "ssid") == 0) {
-    if (strlen(value) > sizeof(m_ssid) - 1) {
-      Serial.printf("Value of 'ssid' too long (>= %d byte)\n",
-                        sizeof(m_ssid));
-      return -2;
-    }
-    strcpy(m_ssid, value);
-  } else if (strcasecmp(key, "password") == 0) {
-    if (strlen(value) > sizeof(m_password) - 1) {
-      Serial.printf("Value of 'password' too long (>= %d byte)\n",
-                        sizeof(m_password));
-      return -2;
-    }
-    strcpy(m_password, value);
-  } else if (strcasecmp(key, "ntp_server") == 0) {
-    if (strlen(value) > sizeof(m_ntp_server) - 1) {
-      Serial.printf("Value of 'ntp_server' too long (>= %d byte)\n",
-                        sizeof(m_ntp_server));
-      return -2;
-    }
-    strcpy(m_ntp_server, value);*/
   } else if (strcasecmp(key, "timezone") == 0) {
     if (strlen(value) > sizeof(m_tzinfo) - 1) {
       Serial.printf("Value of 'tzinfo' too long (>= %d byte)\n",
@@ -145,11 +124,6 @@ int Configuration::config_set(const char *key, const char *value, const bool pri
     }
   } else if (strcasecmp(key, "enable_busy_led") == 0) {
     if (parse_bool(value, &(m_enable_busy_led)) != true) {
-      Serial.printf("Value of '%s' is not a valid boolean\n", key);
-      return -2;
-    }
-  } else if (strcasecmp(key, "enable_flash") == 0) {
-    if (parse_bool(value, &(m_enable_flash)) != true) {
       Serial.printf("Value of '%s' is not a valid boolean\n", key);
       return -2;
     }
@@ -434,6 +408,9 @@ bool Configuration::loadConfig(bool print)
       Serial.println("No config found, using defaults.");
     }
   }
+
+  //When config file is present, also enable debug log
+  m_log_serial = true;
 
   return true;
 }
